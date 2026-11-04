@@ -2,6 +2,8 @@
   <img src="logo.jpeg" alt="格致矩阵 · Gezhi Matrix logo" width="360">
 </p>
 
+**中文** · [English](README.md) · [日本語](README.ja.md)
+
 # 格致矩阵 · Gezhi Matrix
 
 > 格物致知。把任意两个维度排成一张网格，在每一个交叉点上「即物穷理」，逐格生成一份推演。

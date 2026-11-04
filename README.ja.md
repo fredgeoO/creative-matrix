@@ -2,7 +2,7 @@
   <img src="logo.jpeg" alt="格致マトリクス（ゲチ・マトリクス） · Gezhi Matrix logo" width="360">
 </p>
 
-[中文](README.zh.md) · [English](README.en.md) · [日本語](README.ja.md)
+[中文](README.zh.md) · [English](README.md) · **日本語**
 
 # 格致マトリクス（ゲチ・マトリクス） · Gezhi Matrix
 

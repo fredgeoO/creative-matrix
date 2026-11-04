@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.jpeg" alt="格致矩阵 · Gezhi Matrix logo" width="360">
+</p>
+
 # 格致矩阵 · Gezhi Matrix
 
 [中文](README.zh.md) · [English](README.en.md) · [日本語](README.ja.md)

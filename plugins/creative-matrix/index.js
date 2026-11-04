@@ -314,7 +314,9 @@ function createApiHandler(runtime) {
           sendJson(res, 200, { ok: true, value: runtime.promptDefault() })
           return
         case 'presets.list':
-          sendJson(res, 200, { ok: true, value: await runtime.listPresets() })
+          // `lang` is the panel's active locale; without it the runtime falls
+          // back to the configured content language.
+          sendJson(res, 200, { ok: true, value: await runtime.listPresets(args) })
           return
         case 'presets.read':
           sendJson(res, 200, { ok: true, value: await runtime.readPreset(args) })

@@ -86,7 +86,7 @@ The name and the method come from these places — please re-check them together
 | `lib/prompt.js` | System prompt / user prompt / red-team prompt / template drafting & rewriting prompts |
 | `lib/seed.js` | The 6×5 everyday-concept example shown on first open |
 | `lib/sse.js` | SSE frame encoding |
-| `templates/*.md` | 7 built-in templates (read-only) |
+| `templates/*.md` + `templates/<lang>/*.md` | 7 built-in templates (read-only), one translated copy per language directory |
 | `client.js` | Client entry + data layer: store, SSE, Host API actions, sidebar icon and `main` panel registration; embeds both zh/en UI strings |
 | `client.ui.js` | The client UI half: three-tab workspace (Templates / Matrix / Prompt), save-template dialog, batch-generate modal, cell drawer, Markdown rendering and panel CSS. Lazily loaded by `client.js` via `require.async('./client.ui.js')` (ModuleLoader chunk format) |
 | `cordis.patch.yml` | Plugin line and configuration |
@@ -137,7 +137,7 @@ Disk writes use `tmp + rename`, serialized within one runtime; after an external
 
 ## Templates & Presets
 
-Built-in templates live in `templates/`; user presets are written to `presets/`. Both are Markdown plus a small frontmatter block:
+Built-in templates live in `templates/` (the default Chinese copies) and `templates/<lang>/` (translations); user presets are written to `presets/`. Both are Markdown plus a small frontmatter block:
 
 ```md
 ---
@@ -163,8 +163,9 @@ cols:
 先挑一个普通东西，再挑一个普通场景……
 ```
 
+- **Languages**: built-in templates are served in the panel's active language. The root `templates/*.md` files are the Chinese originals; `templates/en/` holds the English set under the same file names, and any other language directory added later works the same way. A missing translation falls back to the English copy, then to the root Chinese file, and a language with no directory at all resolves the same way. Templates keep their language-neutral file name when loaded, so switching the GUI language does not break the current binding — the list and the open detail refresh in place. AI-drafted/rewritten templates follow the panel language too; generated cell text still follows `outputLanguage`.
 - **What a template stores**: title, description, theme, row/column axis titles (with hints), the **system prompt**, and the **user message template**; it stores **no generated cell content whatsoever**.
-- `prompt` is **one line, one sentence** — exactly the system prompt handed to the model at generation time; omit it and the built-in default sentence is used. It may contain placeholders such as `{纵标题}` / `{row}`, `{主题}` / `{theme}` (see the "Generation prompts" section); what gets saved remains a template. Multi-line also parses, but one sentence is more usable — length is controlled by the word count you write into that sentence. All 7 built-in templates use the uniform phrasing "…write this passage directly, no preamble."
+- `prompt` is **one line, one sentence** — exactly the system prompt handed to the model at generation time; omit it and the built-in default sentence is used. It may contain placeholders such as `{纵标题}` / `{row}`, `{主题}` / `{theme}` (see the "Generation prompts" section); what gets saved remains a template. Multi-line also parses, but one sentence is more usable — length is controlled by the word count you write into that sentence. The Chinese built-ins all end with "…直接写这一段，不要开场白。", the English ones with "…Write that paragraph now, no preamble."
 - `userPrompt` holds the user message template (placeholders supported too; usually multi-line); omit it and the built-in default is used. When every placeholder on a line resolves to empty, the whole line is omitted, and empty "( )" pairs are stripped.
 - Built-in templates are read-only; "Save template" only writes to `presets/`, or overwrites one of your own user templates.
 - Loading a template replaces the current matrix's rows/cols/theme/prompt/userPrompt with the template's; old cells go away along with the old axes, and the panel asks for confirmation twice while showing how many cells will be deleted.
@@ -195,6 +196,8 @@ Built-in templates:
 | `life-planning.md` | Life planning: decision trees, opportunity cost, antifragility, life course (6×6) |
 | `iching.md` | I Ching hexagrams: the eight trigrams crossed into 64 hexagrams — a thinking tool, no divination promises (8×8) |
 | `zen.md` | Zen principles: impermanence, non-self, not setting up words and letters, ordinary mind (6×6) |
+
+Every row above also exists as `templates/en/<same name>.md` with the same axes and structure, translated into English. Adding another language means adding one directory (`templates/ja/`, `templates/fr/`, …) with the same file names — nothing in the code needs to change.
 
 ## Generation Prompts
 
@@ -273,9 +276,9 @@ Prefix `/creative-matrix/api`; available only same-origin (loopback + matching O
 | `axes.update` | Inline header edit: `{axis:'row'\|'col', id, name?, hint?}`, passing only the fields to change |
 | `prompt.set` | `{prompt,userPrompt}` writes this matrix's system prompt and user message template; omitting a field keeps its old value, empty string = built-in default |
 | `prompt.default` | Returns the two built-in default templates `{system,user}` in the current language |
-| `presets.list` / `presets.read` | List/read built-in templates and user presets |
+| `presets.list` / `presets.read` | List/read built-in templates and user presets; an optional `lang` (`"en"`, `"zh"`, …) picks the built-in translation and defaults to `outputLanguage` |
 | `presets.save` | Save the current theme/rows/cols/prompt/userPrompt as `presets/<title>.md`; may carry `file` + `overwrite:true` to overwrite a user template, and `bind:true` to bind the matrix to that template |
-| `presets.draft` | Draft a template from a prompt: `{idea}` → `{draft,model,raw}`, nothing written to disk |
+| `presets.draft` | Draft a template from a prompt: `{idea,lang?}` → `{draft,model,raw}`, nothing written to disk; the draft is written in `lang` |
 | `presets.refine` | Rewrite a user preset with a prompt: `{id,idea}`, written back to the original file; built-in templates return `BUILTIN_PRESET` |
 | `presets.delete` | Delete a user preset |
 | `presets.apply` | Apply a template to the current matrix; returns `removedCells` |
@@ -327,7 +330,7 @@ creative_matrix(
         maxTokens: 500         # ~150 characters per cell; 500 is headroom, not a length controller
         critiqueMaxTokens: 200
         temperature: 0.85
-        outputLanguage: zh      # zh | en
+        outputLanguage: zh      # zh | en — language of generated cell text and the fallback for built-in templates
         concurrency: 0          # 0 = all at once (everything generates simultaneously); 1–32 also allowed
 ```
 
@@ -358,7 +361,7 @@ The reasoning tier defaults to "the lowest tier the model supports": creative de
 - After installing, refresh the page once: the "Gezhi Matrix" (格致矩阵) icon appears in the sidebar.
 - Only `client.js` changed: a page refresh is enough.
 - Only `client.ui.js` changed: the chunk URL's `rev` derives from `client.js`'s mtime/size, so touch `client.js` first, then refresh; if you still see the old UI, restart Harness.
-- Only `index.js` / `lib/*.js` / `templates/*.md` changed: toggle the plugin line off and on again, or restart Harness, to reload the Host modules.
+- Only `index.js` / `lib/*.js` / `templates/**/*.md` changed: toggle the plugin line off and on again, or restart Harness, to reload the Host modules.
 - Local plugins install via symlink; moving the workspace breaks them.
 
 ## Testing

@@ -43,6 +43,25 @@ test('every shipped template carries a one-sentence prompt', async () => {
   }
 })
 
+test('the English translation set mirrors the shipped templates', async () => {
+  const root = path.join(here, '..', 'templates')
+  const translated = path.join(root, 'en')
+  const source = (await readdir(root)).filter(name => name.endsWith('.md')).sort()
+  const english = (await readdir(translated)).filter(name => name.endsWith('.md')).sort()
+  assert.deepEqual(english, source, 'every built-in template needs an en/ copy')
+  for (const file of english) {
+    const preset = parsePreset(await readFile(path.join(translated, file), 'utf8'), { file })
+    const original = parsePreset(await readFile(path.join(root, file), 'utf8'), { file })
+    assert.ok(preset.rows.length > 0 && preset.cols.length > 0, `${file}: missing axes`)
+    assert.equal(preset.rows.length, original.rows.length, `${file}: row count differs from the original`)
+    assert.equal(preset.cols.length, original.cols.length, `${file}: column count differs from the original`)
+    assert.match(preset.prompt, /no preamble\.$/, `${file}: prompt must forbid a preamble`)
+    assert.ok(!preset.prompt.includes('\n'), `${file}: prompt must be a single line`)
+    assert.doesNotMatch(preset.title, /[\u4e00-\u9fff]/, `${file}: title is not translated`)
+    assert.doesNotMatch(preset.body, /[\u4e00-\u9fff]/, `${file}: body is not translated`)
+  }
+})
+
 test('quoted values survive a serialize/parse round trip', () => {
   const source = {
     title: 'A: B — 带冒号',

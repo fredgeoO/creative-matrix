@@ -80,7 +80,7 @@
 | `lib/prompt.js` | 系统提示 / 用户提示 / 红队提示 / 模板起草与改写提示 |
 | `lib/seed.js` | 首次打开的 6×5 日常概念示例 |
 | `lib/sse.js` | SSE 帧编码 |
-| `templates/*.md` | 7 套内置模板（只读） |
+| `templates/*.md` + `templates/<lang>/*.md` | 7 套内置模板（只读），每种语言一个翻译目录 |
 | `client.js` | Client 入口 + 数据层：store、SSE、Host API 动作、侧边栏图标与 `main` 面板的注册；内嵌 zh/en 两套界面文案 |
 | `client.ui.js` | Client UI 半边：三 tab 工作区（模板 / 矩阵 / 提示词）、保存模板对话框、批量生成弹窗、单元格抽屉、Markdown 渲染与面板 CSS。由 `client.js` 用 `require.async('./client.ui.js')` 按需加载（ModuleLoader chunk 格式） |
 | `cordis.patch.yml` | 插件行与配置 |
@@ -131,7 +131,7 @@
 
 ## 模板与预设
 
-内置模板在 `templates/`，用户预设写到 `presets/`。两者都是 Markdown + 一小段 frontmatter：
+内置模板在 `templates/`（中文原件）和 `templates/<lang>/`（各语言译本），用户预设写到 `presets/`。两者都是 Markdown + 一小段 frontmatter：
 
 ```md
 ---
@@ -157,8 +157,9 @@ cols:
 先挑一个普通东西，再挑一个普通场景……
 ```
 
+- **多语言**：内置模板按面板当前语言提供。根目录 `templates/*.md` 是中文原件，`templates/en/` 是同名英文译本；以后加别的语言，只需建一个同名目录（`templates/ja/` 等），代码不用动。缺译本时先回落到英文译本，再回落到根目录的中文文件；没有该语言目录时也按这个顺序回落。载入模板时保存的是与语言无关的文件名，所以之后切换界面语言不会把当前绑定弄丢——列表和已打开的详情会就地刷新。用提示词起草/改写模板也跟随面板语言；生成出来的格子正文仍由 `outputLanguage` 决定。
 - **模板存什么**：标题、说明、主题、纵横轴的标题（含 hint）、**系统提示词**、**用户消息模板**；**不存任何已生成的格子内容**。
-- `prompt` 写**一行一句话**，就是生成时给模型的 system 提示词；不写则用内置默认那句。可以带 `{纵标题}`、`{主题}` 等占位符（见「生成提示词」一节），保存的仍是模板。多行也能读，但一句话更好用——长度就靠这句里写的字数控制。7 套内置模板统一用「……直接写这一段，不要开场白。」这个句式。
+- `prompt` 写**一行一句话**，就是生成时给模型的 system 提示词；不写则用内置默认那句。可以带 `{纵标题}`、`{主题}` 等占位符（见「生成提示词」一节），保存的仍是模板。多行也能读，但一句话更好用——长度就靠这句里写的字数控制。中文内置模板统一用「……直接写这一段，不要开场白。」，英文译本统一用「……Write that paragraph now, no preamble.」。
 - `userPrompt` 写用户消息模板（也支持占位符，通常多行）；不写则用内置默认。一行里的占位符全为空时整行省略，空的「（）」会被去掉。
 - 内置模板只读；「保存模板」只会写 `presets/`，或覆盖你自己的用户模板。
 - 载入模板会用模板的 rows/cols/theme/prompt/userPrompt 替换当前矩阵；旧 cell 会随旧轴一起被替换，面板会二次确认并显示会删多少格。
@@ -189,6 +190,8 @@ cols:
 | `life-planning.md` | 人生规划：决策树、机会成本、反脆弱、生命历程（6×6） |
 | `iching.md` | 易经卦象：八卦纵横相叠成六十四卦，思维工具，不做占卜承诺（8×8） |
 | `zen.md` | 禅宗道理：无常、无我、不立文字、平常心（6×6） |
+
+上表每一套在 `templates/en/<同名文件>.md` 都有一份英文译本，纵横轴与结构完全对应。
 
 ## 生成提示词
 
@@ -267,9 +270,9 @@ cols:
 | `axes.update` | 表头内联编辑：`{axis:'row'|'col', id, name?, hint?}`，只传要改的字段 |
 | `prompt.set` | `{prompt,userPrompt}` 写入本矩阵的系统提示词和用户消息模板；省略某字段则保留原值，空字符串 = 内置默认 |
 | `prompt.default` | 返回当前语言的 `{system,user}` 两段内置默认模板 |
-| `presets.list` / `presets.read` | 列出/读取内置模板与用户预设 |
+| `presets.list` / `presets.read` | 列出/读取内置模板与用户预设；可选 `lang` 指定内置模板语言，缺省用 `outputLanguage` |
 | `presets.save` | 保存当前 theme/rows/cols/prompt/userPrompt 为 `presets/<title>.md`；可带 `file` + `overwrite:true` 覆盖用户模板，`bind:true` 把矩阵绑定到该模板 |
-| `presets.draft` | 用提示词起草模板：`{idea}` → `{draft,model,raw}`，不落盘 |
+| `presets.draft` | 用提示词起草模板：`{idea,lang?}` → `{draft,model,raw}`，不落盘；草稿用 `lang` 指定的语言写 |
 | `presets.refine` | 用提示词改写用户预设：`{id,idea}`，写回原文件；内置模板返回 `BUILTIN_PRESET` |
 | `presets.delete` | 删除用户预设 |
 | `presets.apply` | 把模板应用到当前矩阵，返回 `removedCells` |
@@ -321,7 +324,7 @@ creative_matrix(
         maxTokens: 500         # 一格约 150 字，500 只是余量，不是长度控制器
         critiqueMaxTokens: 200
         temperature: 0.85
-        outputLanguage: zh      # zh | en
+        outputLanguage: zh      # zh | en —— 格子正文语言，也是内置模板语言的回落值
         concurrency: 0          # 0 = 一次过（全部同时生成）；也可填 1–32
 ```
 
@@ -352,7 +355,7 @@ creative_matrix(
 - 安装后刷新一次页面：侧边栏出现「格致矩阵」图标。
 - 只改 `client.js`：刷新页面即可。
 - 只改 `client.ui.js`：chunk URL 的 `rev` 取自 `client.js` 的 mtime/size，所以先碰一下 `client.js` 再刷新；若仍看到旧 UI，重启 Harness。
-- 只改 `index.js` / `lib/*.js` / `templates/*.md`：把插件行关一次再开，或重启 Harness，重新加载 Host 模块。
+- 只改 `index.js` / `lib/*.js` / `templates/**/*.md`：把插件行关一次再开，或重启 Harness，重新加载 Host 模块。
 - 本地插件是符号链接安装；移动工作区会导致失效。
 
 ## 测试

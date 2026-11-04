@@ -923,6 +923,9 @@ window.__ModuleLoader__.load({
         const [drafting, setDrafting] = React.useState(false)
         const [refineBusy, setRefineBusy] = React.useState(false)
         const [refineIdea, setRefineIdea] = React.useState('')
+        // Built-in templates are per-language: the list and the open detail
+        // must refresh when the panel locale changes.
+        const lang = snapshot.lang ?? 'zh'
         const cellCount = Object.keys(snapshot.matrix?.cells ?? {}).length
         // Loading a template replaces the axes and clears their cells, so it is
         // blocked while a batch still targets the old row/col ids.
@@ -941,7 +944,25 @@ window.__ModuleLoader__.load({
           }
         }, [])
 
-        React.useEffect(() => { refresh() }, [refresh])
+        React.useEffect(() => { refresh() }, [refresh, lang])
+
+        // Re-read the open template after a locale switch so the detail pane
+        // shows the new language instead of the copy fetched a moment ago. The
+        // ref keeps this effect out of the normal selection path (which reads
+        // the template itself) while still seeing the current selection.
+        const selectedIdRef = React.useRef(null)
+        React.useEffect(() => { selectedIdRef.current = selectedId }, [selectedId])
+        React.useEffect(() => {
+          const id = selectedIdRef.current
+          if (id === null) return undefined
+          let cancelled = false
+          setDetailLoading(true)
+          request('presets.read', { id })
+            .then(value => { if (!cancelled) setDetail(value) })
+            .catch(readError => { if (!cancelled) setError(String(readError?.message ?? readError)) })
+            .finally(() => { if (!cancelled) setDetailLoading(false) })
+          return () => { cancelled = true }
+        }, [lang])
 
         async function select(item) {
           setSelectedId(item.id)

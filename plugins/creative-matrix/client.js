@@ -582,6 +582,10 @@ window.__ModuleLoader__.load({
 
     let bound = null
     let fallback = ZH
+    // The panel's active locale, reduced to its primary subtag ("en", "zh").
+    // Built-in templates and AI-authored drafts follow it, so switching the
+    // GUI language also switches the templates the browser lists.
+    let currentLang = 'zh'
 
     function t(key, vars) {
       let value = bound ? bound(key) : (fallback[key] ?? key)
@@ -598,6 +602,7 @@ window.__ModuleLoader__.load({
 
     const S = {
       snapshot: {
+        lang: currentLang,
         loading: true,
         loaded: false,
         error: null,
@@ -654,12 +659,18 @@ window.__ModuleLoader__.load({
     }
 
     async function request(method, args) {
+      // Template calls carry the panel locale: the Host serves the matching
+      // built-in translation (and drafts in that language) without every call
+      // site threading the language through.
+      const payloadArgs = method.startsWith('presets.')
+        ? { lang: currentLang, ...(args ?? {}) }
+        : (args ?? {})
       let response
       try {
         response = await fetch(API, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ method, args: args ?? {} }),
+          body: JSON.stringify({ method, args: payloadArgs }),
         })
       } catch (error) {
         throw new Error(String(error?.message ?? error))
@@ -1102,11 +1113,30 @@ window.__ModuleLoader__.load({
     async function apply(ctx) {
       const locale = ctx.get('locale')
       if (locale !== undefined && locale !== null) {
-        const localeId = typeof locale.getLocale === 'function' ? locale.getLocale()?.id : undefined
-        fallback = String(localeId ?? 'zh').toLowerCase().startsWith('en') ? EN : ZH
+        const activeId = () => {
+          const snapshot = typeof locale.getLocale === 'function' ? locale.getLocale() : undefined
+          return String(snapshot?.active ?? snapshot?.id ?? 'zh').toLowerCase()
+        }
+        const readLang = () => {
+          const primary = activeId().split(/[-_]/)[0]
+          return /^[a-z]{2,8}$/.test(primary) ? primary : 'zh'
+        }
+        currentLang = readLang()
+        fallback = activeId().startsWith('en') ? EN : ZH
+        setState({ lang: currentLang })
         ctx.effect(() => locale.register('creative-matrix', 'en', EN))
         ctx.effect(() => locale.register('creative-matrix', 'zh', ZH))
         if (typeof locale.bind === 'function') bound = locale.bind('creative-matrix')
+        // The locale switches live; templates the panel lists must follow it.
+        if (typeof locale.subscribe === 'function') {
+          ctx.effect(() => locale.subscribe(() => {
+            fallback = activeId().startsWith('en') ? EN : ZH
+            const next = readLang()
+            if (next === currentLang) return
+            currentLang = next
+            setState({ lang: next })
+          }))
+        }
       }
 
       const slots = ctx.get('slots')

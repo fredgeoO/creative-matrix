@@ -382,6 +382,56 @@ test('presets list, apply, save, read and delete', async t => {
   await assert.rejects(runtime.deletePreset({ file: '../escape.md' }), error => error.code === 'BAD_PRESET')
 })
 
+test('built-in templates resolve per language with English and root fallbacks', async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'creative-matrix-lang-'))
+  t.after(async () => { await rm(dir, { recursive: true, force: true }) })
+  const templates = path.join(dir, 'templates')
+  await mkdir(path.join(templates, 'en'), { recursive: true })
+  const frontmatter = ({ title, row, body }) => [
+    '---',
+    `title: ${title}`,
+    'rows:',
+    `  - name: ${row}`,
+    'cols:',
+    '  - name: 场景',
+    '---',
+    '',
+    body,
+  ].join('\n')
+  await writeFile(path.join(templates, 'demo.md'), frontmatter({ title: '演示模板', row: '甲', body: '# 说明\n\n中文正文。' }), 'utf8')
+  await writeFile(path.join(templates, 'en', 'demo.md'), frontmatter({ title: 'Demo template', row: 'Alpha', body: '# About\n\nEnglish body.' }), 'utf8')
+  // No translation for this one: the English list must still show it.
+  await writeFile(path.join(templates, 'only-zh.md'), frontmatter({ title: '只有中文', row: '乙', body: '# 说明\n\n只有中文。' }), 'utf8')
+  const runtime = createRuntime({
+    config: { baseDir: dir, templatesDir: templates, concurrency: 2, timeoutMs: 5000 },
+    llm: llmWith(() => stopStream(FAST_DRAFT)),
+    selection: () => ({ provider: 'p', model: 'm' }),
+  })
+
+  const en = await runtime.listPresets({ lang: 'en-US' })
+  assert.equal(en.lang, 'en')
+  assert.equal(en.presets.length, 2, 'the same file must not be listed twice per language')
+  assert.equal(en.presets.find(preset => preset.file === 'demo.md').title, 'Demo template')
+  assert.equal(en.presets.find(preset => preset.file === 'only-zh.md').title, '只有中文')
+
+  const readEn = await runtime.readPreset({ id: 'builtin:demo.md', lang: 'en' })
+  assert.equal(readEn.title, 'Demo template')
+  assert.match(readEn.body, /English body/)
+  const applied = await runtime.applyPreset({ id: 'builtin:demo.md', lang: 'en' })
+  assert.equal(applied.matrix.rows[0].name, 'Alpha')
+  assert.equal(applied.matrix.preset.file, 'demo.md', 'the bound preset keeps its language-neutral file name')
+
+  // No lang: the configured content language decides.
+  const zh = await runtime.listPresets()
+  assert.equal(zh.presets.find(preset => preset.file === 'demo.md').title, '演示模板')
+  assert.equal((await runtime.readPreset({ id: 'builtin:demo.md' })).title, '演示模板')
+
+  // A language with no directory falls back to English, then to the root copy.
+  const ja = await runtime.listPresets({ lang: 'ja' })
+  assert.equal(ja.presets.find(preset => preset.file === 'demo.md').title, 'Demo template')
+  assert.equal(ja.presets.find(preset => preset.file === 'only-zh.md').title, '只有中文')
+})
+
 const TEMPLATE_REPLY = [
   '```yaml',
   'title: 谈判推演',
@@ -415,6 +465,18 @@ test('draftPreset turns an idea into a template draft without touching the store
   assert.equal(await readFile(path.join(dir, 'data', 'matrix.json'), 'utf8'), before)
   assert.deepEqual((await runtime.listPresets()).presets.filter(p => p.source === 'user'), [])
   await assert.rejects(runtime.draftPreset({ idea: '  ' }), error => error.code === 'BAD_REQUEST')
+})
+
+test('draftPreset authors in the requested language', async t => {
+  const llm = llmWith(() => stopStream(TEMPLATE_REPLY))
+  const { runtime } = await makeRuntime(t, { llm })
+  const userText = call => call.messages[0].content[0].text
+  await runtime.draftPreset({ idea: '谈判里的博弈模型', lang: 'en' })
+  assert.match(llm.calls[0].system, /You design matrix templates/)
+  assert.match(userText(llm.calls[0]), /^Idea:/m)
+  await runtime.draftPreset({ idea: '谈判里的博弈模型', lang: 'zh' })
+  assert.match(llm.calls[1].system, /矩阵模板作者/)
+  assert.match(userText(llm.calls[1]), /^想法：/m)
 })
 
 test('draftPreset keeps the current theme and prompt when the model omits them', async t => {

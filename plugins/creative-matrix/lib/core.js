@@ -64,6 +64,15 @@ function clampInt(value, min, max, fallback) {
   return Math.min(max, Math.max(min, Math.round(number)))
 }
 
+// Built-in templates may ship one translation directory per language
+// (`templates/en/`, `templates/ja/`, …). The tag is reduced to its primary
+// subtag and kept to ASCII letters so it can never escape the templates
+// directory; anything unusable falls back to the matrix content language.
+function presetLanguage(value, fallback = 'zh') {
+  const primary = String(value ?? '').trim().toLowerCase().split(/[-_]/)[0]
+  return /^[a-z]{2,8}$/.test(primary) ? primary : fallback
+}
+
 function resolveConfig(input = {}) {
   const baseDir = typeof input.baseDir === 'string' && input.baseDir.trim() !== ''
     ? path.resolve(input.baseDir)
@@ -722,7 +731,23 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     }
   }
 
-  function presetPath(source, file) {
+  // A built-in template is stored once per language: the root file is the
+  // default (Chinese) copy and `templates/<lang>/<same name>` overrides it for
+  // that language. Keeping the logical file name language-free is what lets a
+  // bound preset survive a language switch instead of pointing at a stale path.
+  //
+  // Priority: requested language, then English (the GUI's own fallback), then
+  // the root copies — so a language without a translation directory still gets
+  // a readable set instead of an empty list.
+  function builtinDirs(base, lang) {
+    const primary = presetLanguage(lang, resolved.outputLanguage)
+    const dirs = [path.join(base, primary)]
+    if (primary !== 'zh') dirs.push(path.join(base, 'en'))
+    dirs.push(base)
+    return [...new Set(dirs)]
+  }
+
+  async function presetPath(source, file, lang) {
     const base = source === 'builtin' ? resolved.templatesDir : resolved.presetsDir
     if (base === '') {
       throw new RuntimeError('NO_TEMPLATES', 'the templates directory is not configured', 500)
@@ -733,15 +758,20 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
       throw new RuntimeError('BAD_PRESET', `invalid preset file name: ${raw}`, 400)
     }
     const root = path.resolve(base)
-    const full = path.resolve(root, name)
-    if (full !== path.join(root, name)) {
+    const plain = path.resolve(root, name)
+    if (plain !== path.join(root, name)) {
       throw new RuntimeError('BAD_PRESET', `invalid preset file name: ${raw}`, 400)
     }
-    return full
+    if (source !== 'builtin') return plain
+    for (const dir of builtinDirs(root, lang)) {
+      const candidate = path.join(dir, name)
+      if (await fileExists(candidate)) return candidate
+    }
+    return plain
   }
 
-  async function readPresetFile(source, file) {
-    const full = presetPath(source, file)
+  async function readPresetFile(source, file, lang) {
+    const full = await presetPath(source, file, lang)
     const [text, info] = await Promise.all([readFile(full, 'utf8'), stat(full)])
     const parsed = parsePreset(text, { file })
     return {
@@ -753,21 +783,35 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     }
   }
 
-  async function listPresetDir(source) {
+  async function listPresetDir(source, lang) {
     const base = source === 'builtin' ? resolved.templatesDir : resolved.presetsDir
     if (base === '') return []
-    let entries
-    try {
-      entries = await readdir(base)
-    } catch (error) {
-      if (error?.code === 'ENOENT') return []
-      throw new RuntimeError('PRESET_READ', String(error?.message ?? error), 500)
-    }
-    const files = entries.filter(name => name.toLowerCase().endsWith('.md')).sort().slice(0, 100)
-    const out = []
-    for (const file of files) {
+    // Language directory first, then the fallbacks: a translated file wins,
+    // and an untranslated one is still listed in the default language instead
+    // of silently disappearing from a half-translated set.
+    const dirs = source === 'builtin' ? builtinDirs(base, lang) : [base]
+    const found = []
+    const seen = new Set()
+    for (const dir of dirs) {
+      let entries
       try {
-        const full = path.join(base, file)
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch (error) {
+        if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') continue
+        throw new RuntimeError('PRESET_READ', String(error?.message ?? error), 500)
+      }
+      for (const entry of entries) {
+        if (!entry.isFile()) continue
+        const file = entry.name
+        if (!file.toLowerCase().endsWith('.md') || seen.has(file)) continue
+        seen.add(file)
+        found.push({ file, full: path.join(dir, file) })
+      }
+    }
+    found.sort((left, right) => (left.file < right.file ? -1 : left.file > right.file ? 1 : 0))
+    const out = []
+    for (const { file, full } of found.slice(0, 100)) {
+      try {
         const [text, info] = await Promise.all([readFile(full, 'utf8'), stat(full)])
         const parsed = parsePreset(text, { file })
         out.push({
@@ -802,9 +846,13 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     return out
   }
 
-  async function listPresets() {
+  async function listPresets({ lang } = {}) {
     await ensureLoaded()
-    const [builtin, user] = await Promise.all([listPresetDir('builtin'), listPresetDir('user')])
+    const language = presetLanguage(lang, resolved.outputLanguage)
+    const [builtin, user] = await Promise.all([
+      listPresetDir('builtin', language),
+      listPresetDir('user', language),
+    ])
     builtin.sort((left, right) => {
       if (left.file === 'starter-simple.md') return -1
       if (right.file === 'starter-simple.md') return 1
@@ -813,18 +861,19 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     user.sort((left, right) => right.updatedAt - left.updatedAt)
     return {
       presets: [...builtin, ...user],
+      lang: language,
       templatesDir: resolved.templatesDir,
       presetsDir: resolved.presetsDir,
     }
   }
 
-  async function readPreset({ id, file } = {}) {
+  async function readPreset({ id, file, lang } = {}) {
     await ensureLoaded()
     const raw = String(id ?? file ?? '')
     const match = raw.match(/^(builtin|user):(.+)$/i)
-    if (match !== null) return readPresetFile(match[1].toLowerCase(), match[2])
+    if (match !== null) return readPresetFile(match[1].toLowerCase(), match[2], lang)
     if (raw === '') throw new RuntimeError('BAD_PRESET', 'preset id is required', 400)
-    return readPresetFile('user', raw)
+    return readPresetFile('user', raw, lang)
   }
 
   function cleanPresetAxes(list, label) {
@@ -870,14 +919,14 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     })
     await mkdir(resolved.presetsDir, { recursive: true })
     let file = presetFilename(input.file, title)
-    let full = presetPath('user', file)
+    let full = await presetPath('user', file)
     if (await fileExists(full)) {
       if (input.overwrite !== true) {
         const stem = file.replace(/\.md$/i, '')
         let counter = 2
         while (await fileExists(path.join(resolved.presetsDir, `${stem}-${counter}.md`))) counter += 1
         file = `${stem}-${counter}.md`
-        full = presetPath('user', file)
+        full = await presetPath('user', file)
       }
     }
     const temporary = `${full}.tmp`
@@ -904,7 +953,7 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
   async function deletePreset({ file } = {}) {
     await ensureLoaded()
     const name = String(file ?? '')
-    const full = presetPath('user', name)
+    const full = await presetPath('user', name)
     await unlink(full)
     if (matrix !== null && matrix.preset?.source === 'user' && matrix.preset.file === name) {
       matrix = { ...matrix, preset: null, updatedAt: now() }
@@ -913,9 +962,9 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     return { file: name, deleted: true }
   }
 
-  async function applyPreset({ id, file } = {}) {
+  async function applyPreset({ id, file, lang } = {}) {
     await ensureLoaded()
-    const preset = await readPreset({ id, file })
+    const preset = await readPreset({ id, file, lang })
     const axes = presetAxes(preset)
     const result = replaceAxes(matrix, {
       theme: preset.theme,
@@ -993,19 +1042,22 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     }
   }
 
-  async function draftPreset({ idea, signal } = {}) {
+  async function draftPreset({ idea, signal, lang } = {}) {
     await ensureLoaded()
     const question = String(idea ?? '').trim().slice(0, PRESET_MAX.description)
     if (question === '') throw new RuntimeError('BAD_REQUEST', 'idea must not be empty', 400)
+    // Authoring follows the language asking for the template (the panel's
+    // locale); cell generation keeps using the matrix content language.
+    const language = presetLanguage(lang, resolved.outputLanguage)
     const controller = new AbortController()
     const onAbort = () => controller.abort()
     signal?.addEventListener('abort', onAbort, { once: true })
     try {
       const { text, route } = await runTemplateStage({
-        system: buildTemplateSystem(resolved.outputLanguage),
+        system: buildTemplateSystem(language),
         user: buildTemplateUser({
           idea: question,
-          language: resolved.outputLanguage,
+          language,
           current: matrix === null ? null : {
             title: matrix.title,
             theme: matrix.theme,
@@ -1024,11 +1076,12 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     }
   }
 
-  async function refinePreset({ id, file, idea, signal } = {}) {
+  async function refinePreset({ id, file, idea, signal, lang } = {}) {
     await ensureLoaded()
     const question = String(idea ?? '').trim().slice(0, PRESET_MAX.description)
     if (question === '') throw new RuntimeError('BAD_REQUEST', 'idea must not be empty', 400)
-    const preset = await readPreset({ id, file })
+    const language = presetLanguage(lang, resolved.outputLanguage)
+    const preset = await readPreset({ id, file, lang: language })
     if (preset.source !== 'user') {
       throw new RuntimeError('BUILTIN_PRESET', 'built-in templates are read-only; load one and save it as your own before editing it by prompt', 400)
     }
@@ -1037,10 +1090,10 @@ export function createRuntime({ storePath, config = {}, llm, selection, now = Da
     signal?.addEventListener('abort', onAbort, { once: true })
     try {
       const { text, route } = await runTemplateStage({
-        system: buildRefineSystem(resolved.outputLanguage),
+        system: buildRefineSystem(language),
         user: buildRefineUser({
           idea: question,
-          language: resolved.outputLanguage,
+          language,
           current: {
             title: preset.title,
             description: preset.description,

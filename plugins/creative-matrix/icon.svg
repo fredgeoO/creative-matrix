@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+  <title>格致矩阵</title>
+  <rect x="2.6" y="2.6" width="18.8" height="18.8" rx="3.4" stroke="#7E97BD" stroke-width="1.4"/>
+  <path d="M9 2.6v18.8M15 2.6v18.8M2.6 9h18.8M2.6 15h18.8" stroke="#7E97BD" stroke-width="1.1" opacity="0.7"/>
+  <rect x="9.6" y="9.6" width="4.8" height="4.8" rx="1" fill="#D9AE62" opacity="0.32"/>
+  <circle cx="12" cy="12" r="1.7" fill="#D9AE62"/>
+</svg>

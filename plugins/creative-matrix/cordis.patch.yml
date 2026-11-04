@@ -1,0 +1,14 @@
+- insert:
+    - id: creative-matrix
+      name: '@local/creative-matrix'
+      config:
+        baseDir: 'C:\Users\zgw31\Documents\deepseek-harness\polymath_matrix'
+        # One cell is ~150 characters plus a takeaway line (~250 tokens). This cap
+        # is headroom, not the length control: the system prompt holds the shape,
+        # the cap only stops a runaway. Keep them in step or the prompt loses.
+        maxTokens: 500
+        critiqueMaxTokens: 200
+        temperature: 0.85
+        outputLanguage: zh
+        # 0 = 一次过：一次批量里所有单元格同时开始。面板顶部可随时改成 1/2/3/4/6/8/12。
+        concurrency: 0

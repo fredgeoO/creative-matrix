@@ -1,0 +1,8 @@
+node_modules/
+output/
+*.log
+Thumbs.db
+.DS_Store
+
+# 矩阵数据的历史备份
+data/*.bak*
